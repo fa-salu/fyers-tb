@@ -1,0 +1,1214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BANKNIFTY DOM Analyzer</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@3.9.4/dist/full.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        .bid-row:hover, .ask-row:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: background-color 0.2s;
+        }
+        
+        .depth-bar {
+            height: 4px;
+            border-radius: 2px;
+            transition: width 0.5s ease-out;
+        }
+        
+        .data-update {
+            animation: flash 0.5s;
+        }
+        
+        @keyframes flash {
+            0% { background-color: rgba(255, 255, 255, 0.2); }
+            100% { background-color: transparent; }
+        }
+        
+        .card {
+            transition: all 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+        
+        .stat-value {
+            transition: color 0.3s;
+        }
+        
+        .heat-cell {
+            transition: background-color 0.5s ease;
+        }
+        
+        .price-highlight {
+            position: relative;
+        }
+        
+        .price-highlight::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 3px;
+            height: 100%;
+            background-color: currentColor;
+        }
+        
+        .bid-heat-0 { background-color: rgba(72, 187, 120, 0.05); }
+        .bid-heat-1 { background-color: rgba(72, 187, 120, 0.1); }
+        .bid-heat-2 { background-color: rgba(72, 187, 120, 0.15); }
+        .bid-heat-3 { background-color: rgba(72, 187, 120, 0.2); }
+        .bid-heat-4 { background-color: rgba(72, 187, 120, 0.3); }
+        .bid-heat-5 { background-color: rgba(72, 187, 120, 0.4); }
+        
+        .ask-heat-0 { background-color: rgba(244, 63, 94, 0.05); }
+        .ask-heat-1 { background-color: rgba(244, 63, 94, 0.1); }
+        .ask-heat-2 { background-color: rgba(244, 63, 94, 0.15); }
+        .ask-heat-3 { background-color: rgba(244, 63, 94, 0.2); }
+        .ask-heat-4 { background-color: rgba(244, 63, 94, 0.3); }
+        .ask-heat-5 { background-color: rgba(244, 63, 94, 0.4); }
+        
+        /* Scrollbar styling */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .badge-pulse {
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+        
+        .grid-highlight {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+        
+        .spread-line {
+            height: 2px;
+            background-color: rgba(255, 255, 255, 0.3);
+            margin: 2px 0;
+        }
+        
+        .price-level-marker {
+            position: absolute;
+            left: -12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        
+        /* Animated gradient background for the hero section */
+        .gradient-bg {
+            background: linear-gradient(-45deg, #162434, #1d3a4e, #162434, #1f4164);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+        }
+        
+        @keyframes gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        .custom-tooltip {
+            position: absolute;
+            display: none;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 100;
+            pointer-events: none;
+        }
+        
+        .blinking {
+            animation: blink 1s ease-in-out infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="bg-base-200 min-h-screen" data-theme="dark">
+    <div id="tooltip" class="custom-tooltip"></div>
+    
+    <div class="navbar bg-base-100 shadow-md sticky top-0 z-10">
+        <div class="flex-1">
+            <a class="btn btn-ghost normal-case text-xl">
+                <span class="text-primary font-bold">BANK</span><span>NIFTY</span>
+                <span class="text-xs ml-2 badge badge-primary badge-outline badge-sm">DOM ANALYZER</span>
+            </a>
+        </div>
+        
+        <div class="flex-none gap-2">
+            <div class="stats shadow hidden md:flex">
+                <div class="stat px-4 py-2">
+                    <div class="stat-title text-xs">Symbol</div>
+                    <div class="stat-value text-md font-mono">BANKNIFTY25FEBFUT</div>
+                </div>
+                <div class="stat px-4 py-2">
+                    <div class="stat-title text-xs">Last Price</div>
+                    <div class="stat-value text-md font-mono" id="last-price">--</div>
+                    <div class="stat-desc text-xs" id="price-change">--</div>
+                </div>
+                <div class="stat px-4 py-2">
+                    <div class="stat-title text-xs">Bid-Ask Spread</div>
+                    <div class="stat-value text-md font-mono" id="bid-ask-spread">--</div>
+                </div>
+            </div>
+            
+            <div class="dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-ghost btn-circle">
+                    <div class="indicator">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        </svg>
+                        <span class="badge badge-xs badge-primary indicator-item" id="alert-indicator"></span>
+                    </div>
+                </label>
+                <div tabindex="0" class="mt-3 z-[1] card card-compact dropdown-content w-72 bg-base-100 shadow">
+                    <div class="card-body">
+                        <h3 class="font-bold text-lg">DOM Alerts</h3>
+                        <div id="alert-container">
+                            <p class="text-sm opacity-70">No active alerts</p>
+                        </div>
+                        <div class="card-actions">
+                            <button class="btn btn-primary btn-sm btn-block">Add Alert</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <label class="swap swap-rotate">
+                <input type="checkbox" class="theme-controller" value="dark" checked />
+                <svg class="swap-on fill-current w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29,1,1,0,0,0,0-1.41l-.71-.71A1,1,0,0,0,4.93,6.34Zm12,.29a1,1,0,0,0,.7-.29l.71-.71a1,1,0,1,0-1.41-1.41L17,5.64a1,1,0,0,0,0,1.41A1,1,0,0,0,17.66,7.34ZM21,11H20a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Zm-9,8a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V20A1,1,0,0,0,12,19ZM18.36,17A1,1,0,0,0,17,18.36l.71.71a1,1,0,0,0,1.41,0,1,1,0,0,0,0-1.41ZM12,6.5A5.5,5.5,0,1,0,17.5,12,5.51,5.51,0,0,0,12,6.5Zm0,9A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z"/></svg>
+                <svg class="swap-off fill-current w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z"/></svg>
+            </label>
+        </div>
+    </div>
+
+    <div class="container mx-auto px-4 py-4">
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-4">
+            <!-- Market Overview Card -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h2 class="card-title text-lg">Market Overview</h2>
+                    <div class="divider my-1"></div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="stat bg-base-200 rounded-box p-3">
+                            <div class="stat-title text-xs">Total Bid Qty</div>
+                            <div class="stat-value text-success text-xl" id="total-bid-qty">0</div>
+                            <div class="flex items-center text-xs">
+                                <span class="inline-block w-2 h-2 bg-success rounded-full mr-1"></span>
+                                <span class="opacity-70">Buy Side</span>
+                            </div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-3">
+                            <div class="stat-title text-xs">Total Ask Qty</div>
+                            <div class="stat-value text-error text-xl" id="total-ask-qty">0</div>
+                            <div class="flex items-center text-xs">
+                                <span class="inline-block w-2 h-2 bg-error rounded-full mr-1"></span>
+                                <span class="opacity-70">Sell Side</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <div class="mb-1 flex justify-between">
+                            <span class="text-xs font-semibold">Bid-Ask Ratio</span>
+                            <span class="text-xs font-mono" id="bid-ask-ratio">1:1</span>
+                        </div>
+                        <div class="h-2 w-full bg-base-300 rounded-full overflow-hidden">
+                            <div class="flex h-full">
+                                <div class="bg-success h-full" id="bid-ratio-bar" style="width: 50%"></div>
+                                <div class="bg-error h-full" id="ask-ratio-bar" style="width: 50%"></div>
+                            </div>
+                        </div>
+                        <div class="text-xs mt-1 text-center" id="bid-ask-summary">Balanced market</div>
+                    </div>
+                    
+                    <div class="mt-3 text-xs text-center">
+                        <span class="opacity-70">Last Updated: </span>
+                        <span id="last-update-time" class="font-mono">--</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Market Sentiment Card -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h2 class="card-title text-lg">Market Sentiment</h2>
+                    <div class="divider my-1"></div>
+                    
+                    <div class="flex justify-center mb-3">
+                        <div class="badge badge-lg" id="market-sentiment">Neutral</div>
+                    </div>
+                    
+                    <div class="radial-progress mx-auto" style="--value:50; --size:8rem; --thickness: 0.8rem;" id="sentiment-gauge">50%</div>
+                    
+                    <div class="text-center mt-3">
+                        <span class="text-xs opacity-70">Sentiment Score: </span>
+                        <span id="sentiment-score" class="font-mono">0.0</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Price Level Metrics -->
+        <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h2 class="card-title text-lg">Price Levels</h2>
+                    <div class="divider my-1"></div>
+                    
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="stat bg-base-200 rounded-box p-2">
+                            <div class="stat-title text-xs">VWAP</div>
+                            <div class="stat-value text-info text-xl" id="vwap-value">--</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-2">
+                            <div class="stat-title text-xs">Imbalance</div>
+                            <div class="stat-value text-warning text-xl" id="market-imbalance">--</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-2">
+                        <div class="text-sm font-semibold mb-1">Support Levels</div>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs w-full">
+                                <thead>
+                                    <tr>
+                                        <th>Price</th>
+                                        <th>Distance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="font-mono" id="support-level-1">--</td>
+                                        <td class="font-mono" id="support-distance-1">--</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="font-mono" id="support-level-2">--</td>
+                                        <td class="font-mono" id="support-distance-2">--</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="mt-2">
+                        <div class="text-sm font-semibold mb-1">Resistance Levels</div>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs w-full">
+                                <thead>
+                                    <tr>
+                                        <th>Price</th>
+                                        <th>Distance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="font-mono" id="resistance-level-1">--</td>
+                                        <td class="font-mono" id="resistance-distance-1">--</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="font-mono" id="resistance-level-2">--</td>
+                                        <td class="font-mono" id="resistance-distance-2">--</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Order Flow Metrics -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h2 class="card-title text-lg">Order Flow Metrics</h2>
+                    <div class="divider my-1"></div>
+                    
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="stat bg-base-200 rounded-box p-2">
+                            <div class="stat-title text-xs">Buyer Control</div>
+                            <div class="stat-value text-success text-xl" id="order-strength">--</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-2">
+                            <div class="stat-title text-xs">Price Pressure</div>
+                            <div class="stat-value text-xl" id="price-pressure">--</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-2">
+                            <div class="stat-title text-xs">Cum. Delta</div>
+                            <div class="stat-value text-xl" id="cumulative-delta">--</div>
+                        </div>
+                        <div class="stat bg-base-200 rounded-box p-2">
+                            <div class="stat-title text-xs">DOM Efficiency</div>
+                            <div class="stat-value text-xl" id="market-efficiency">--</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-2">
+                        <div class="text-sm font-semibold mb-1">Cluster Analysis</div>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs w-full">
+                                <tbody>
+                                    <tr>
+                                        <td>Bid Concentration</td>
+                                        <td class="text-right font-mono" id="bid-concentration">--</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Ask Distribution</td>
+                                        <td class="text-right font-mono" id="ask-distribution">--</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Top 10 Bid/Total</td>
+                                        <td class="text-right font-mono" id="top-bids-ratio">--</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Top 10 Ask/Total</td>
+                                        <td class="text-right font-mono" id="top-asks-ratio">--</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- DOM Display Options -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body p-4">
+                <div class="flex flex-col md:flex-row justify-between items-center mb-2">
+                    <h2 class="card-title text-lg">Depth of Market (DOM)</h2>
+                    <div class="badge badge-primary mt-1 md:mt-0" id="dom-levels-count">50 Levels</div>
+                    <div class="flex gap-2 mt-2 md:mt-0">
+                        <select class="select select-sm select-bordered" id="depth-level-select">
+                            <option value="10">10 Levels</option>
+                            <option value="20">20 Levels</option>
+                            <option value="50" selected>50 Levels</option>
+                        </select>
+                        <div class="form-control">
+                            <label class="label cursor-pointer">
+                                <span class="label-text mr-2">Depth Bars</span> 
+                                <input type="checkbox" class="toggle toggle-sm toggle-primary" id="toggle-depth-bars" checked />
+                            </label>
+                        </div>
+                        <div class="form-control">
+                            <label class="label cursor-pointer">
+                                <span class="label-text mr-2">Hide Zero Qty</span> 
+                                <input type="checkbox" class="toggle toggle-sm toggle-primary" id="toggle-hide-zero" checked />
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="divider my-1"></div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Bid Orders (Buy) - Now on LEFT side -->
+                    <div>
+                        <h3 class="text-md font-bold mb-2 text-success flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                            </svg>
+                            Bid Orders (Buy)
+                        </h3>
+                        <div class="stat bg-base-200 rounded-box p-2 mb-2">
+                            <div class="text-xs opacity-70">Visible Quantity</div>
+                            <div class="font-bold text-success" id="visible-bid-qty">0</div>
+                        </div>
+                        <div class="overflow-x-auto max-h-[600px] custom-scrollbar">
+                            <table class="table table-sm w-full">
+                                <thead>
+                                    <tr>
+                                        <th class="bg-base-200">Level</th>
+                                        <th class="bg-base-200">Price</th>
+                                        <th class="bg-base-200 text-right">Qty</th>
+                                        <th class="bg-base-200 text-center">Orders</th>
+                                        <th class="bg-base-200">Depth</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="bids" class="text-success">
+                                    <!-- Bid data will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Ask Orders (Sell) - Now on RIGHT side -->
+                    <div>
+                        <h3 class="text-md font-bold mb-2 text-error flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                            </svg>
+                            Ask Orders (Sell)
+                        </h3>
+                        <div class="stat bg-base-200 rounded-box p-2 mb-2">
+                            <div class="text-xs opacity-70">Visible Quantity</div>
+                            <div class="font-bold text-error" id="visible-ask-qty">0</div>
+                        </div>
+                        <div class="overflow-x-auto max-h-[600px] custom-scrollbar">
+                            <table class="table table-sm w-full">
+                                <thead>
+                                    <tr>
+                                        <th class="bg-base-200">Level</th>
+                                        <th class="bg-base-200">Price</th>
+                                        <th class="bg-base-200 text-right">Qty</th>
+                                        <th class="bg-base-200 text-center">Orders</th>
+                                        <th class="bg-base-200">Depth</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="asks" class="text-error">
+                                    <!-- Ask data will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Additional Analysis Section -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+            <!-- Large Order Watch -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h3 class="card-title text-sm">Large Order Watch</h3>
+                    <div class="divider my-1"></div>
+                    <div class="overflow-x-auto max-h-[200px] custom-scrollbar">
+                        <table class="table table-xs w-full">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Price</th>
+                                    <th>Quantity</th>
+                                    <th>% of Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="large-orders">
+                                <!-- Large orders will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Depth Distribution -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h3 class="card-title text-sm">Depth Distribution</h3>
+                    <div class="divider my-1"></div>
+                    
+                    <div class="mb-2">
+                        <div class="text-xs mb-1">Top 5 Levels</div>
+                        <div class="flex justify-between items-center">
+                            <div class="text-success text-xs font-mono" id="top5-bid-percent">--</div>
+                            <div class="h-3 w-full mx-2 bg-base-300 rounded-full overflow-hidden">
+                                <div class="flex h-full">
+                                    <div class="bg-success h-full" id="top5-bid-bar" style="width: 50%"></div>
+                                    <div class="bg-error h-full" id="top5-ask-bar" style="width: 50%"></div>
+                                </div>
+                            </div>
+                            <div class="text-error text-xs font-mono" id="top5-ask-percent">--</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-2">
+                        <div class="text-xs mb-1">Next 10 Levels</div>
+                        <div class="flex justify-between items-center">
+                            <div class="text-success text-xs font-mono" id="next10-bid-percent">--</div>
+                            <div class="h-3 w-full mx-2 bg-base-300 rounded-full overflow-hidden">
+                                <div class="flex h-full">
+                                    <div class="bg-success h-full" id="next10-bid-bar" style="width: 50%"></div>
+                                    <div class="bg-error h-full" id="next10-ask-bar" style="width: 50%"></div>
+                                </div>
+                            </div>
+                            <div class="text-error text-xs font-mono" id="next10-ask-percent">--</div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-2">
+                        <div class="text-xs mb-1">Remaining Levels</div>
+                        <div class="flex justify-between items-center">
+                            <div class="text-success text-xs font-mono" id="rest-bid-percent">--</div>
+                            <div class="h-3 w-full mx-2 bg-base-300 rounded-full overflow-hidden">
+                                <div class="flex h-full">
+                                    <div class="bg-success h-full" id="rest-bid-bar" style="width: 50%"></div>
+                                    <div class="bg-error h-full" id="rest-ask-bar" style="width: 50%"></div>
+                                </div>
+                            </div>
+                            <div class="text-error text-xs font-mono" id="rest-ask-percent">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Price Level Clusters -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body p-4">
+                    <h3 class="card-title text-sm">Price Level Activity</h3>
+                    <div class="divider my-1"></div>
+                    
+                    <div class="overflow-x-auto max-h-[200px] custom-scrollbar">
+                        <table class="table table-xs w-full">
+                            <thead>
+                                <tr>
+                                    <th>Price Range</th>
+                                    <th>Bid Qty</th>
+                                    <th>Ask Qty</th>
+                                    <th>Net</th>
+                                </tr>
+                            </thead>
+                            <tbody id="price-clusters">
+                                <!-- Price clusters will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <footer class="footer footer-center p-4 bg-base-100 text-base-content mt-4">
+        <div>
+            <p>© 2023 - BANKNIFTY DOM Analyzer - Real-time data from Fyers</p>
+        </div>
+    </footer>
+
+    <script>
+        const socket = io();
+        let priceChange = 0;
+        let lastPrice = 0;
+        let maxQuantity = { bid: 1, ask: 1 };
+        let vwap = 0;
+        let cumulativeDelta = 0;
+        let previousValidData = {
+            bids: [],
+            asks: []
+        };
+        
+        function formatPrice(price) {
+            return price.toLocaleString('en-IN', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
+        
+        function formatPriceChange(change) {
+            if (change >= 0) {
+                return `+${formatPrice(change)}`;
+            } else {
+                return formatPrice(change);
+            }
+        }
+        
+        function formatQuantity(qty) {
+            return qty.toLocaleString('en-IN');
+        }
+        
+        function formatPercentage(pct) {
+            return `${pct.toFixed(1)}%`;
+        }
+        
+        function formatDateTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString('en-IN', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+        }
+        
+        function calculateSentiment(bidQty, askQty) {
+            const total = bidQty + askQty;
+            if (total === 0) return 0;
+            
+            // Calculate a sentiment score between -1 (bearish) and 1 (bullish)
+            const sentiment = (bidQty - askQty) / total;
+            return sentiment;
+        }
+        
+        function calculateVWAP(bids, asks) {
+            let totalVolume = 0;
+            let sumPriceVolume = 0;
+            
+            // Include both bids and asks in VWAP calculation
+            bids.forEach(bid => {
+                sumPriceVolume += bid.price * bid.quantity;
+                totalVolume += bid.quantity;
+            });
+            
+            asks.forEach(ask => {
+                sumPriceVolume += ask.price * ask.quantity;
+                totalVolume += ask.quantity;
+            });
+            
+            if (totalVolume === 0) return 0;
+            return sumPriceVolume / totalVolume;
+        }
+        
+        function calculatePriceClusters(bids, asks) {
+            // Get price range
+            const allPrices = [...bids.map(b => b.price), ...asks.map(a => a.price)];
+            const minPrice = Math.min(...allPrices);
+            const maxPrice = Math.max(...allPrices);
+            const priceRange = maxPrice - minPrice;
+            
+            // Create 5 clusters
+            const clusterSize = priceRange / 5;
+            const clusters = [];
+            
+            for (let i = 0; i < 5; i++) {
+                const lowerBound = minPrice + (i * clusterSize);
+                const upperBound = minPrice + ((i + 1) * clusterSize);
+                
+                let bidQty = 0;
+                let askQty = 0;
+                
+                bids.forEach(bid => {
+                    if (bid.price >= lowerBound && bid.price < upperBound) {
+                        bidQty += bid.quantity;
+                    }
+                });
+                
+                asks.forEach(ask => {
+                    if (ask.price >= lowerBound && ask.price < upperBound) {
+                        askQty += ask.quantity;
+                    }
+                });
+                
+                clusters.push({
+                    range: `${formatPrice(lowerBound)}-${formatPrice(upperBound)}`,
+                    bidQty,
+                    askQty,
+                    net: bidQty - askQty
+                });
+            }
+            
+            return clusters;
+        }
+        
+        function getSupportResistanceLevels(bids, asks) {
+            // Group quantities by price and find significant levels
+            const priceMap = new Map();
+            
+            bids.forEach(bid => {
+                const price = bid.price;
+                priceMap.set(price, (priceMap.get(price) || 0) + bid.quantity);
+            });
+            
+            asks.forEach(ask => {
+                const price = ask.price;
+                priceMap.set(price, (priceMap.get(price) || 0) + ask.quantity);
+            });
+            
+            // Sort by quantity
+            const sortedLevels = [...priceMap.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+            
+            // Find support levels (below current price)
+            const bestBid = bids.length > 0 ? bids[0].price : 0;
+            const bestAsk = asks.length > 0 ? asks[0].price : 0;
+            const midPrice = (bestBid + bestAsk) / 2;
+            
+            const supportLevels = sortedLevels
+                .filter(level => level[0] < midPrice)
+                .slice(0, 2)
+                .map(level => ({
+                    price: level[0],
+                    strength: level[1],
+                    distance: midPrice - level[0]
+                }));
+                
+            const resistanceLevels = sortedLevels
+                .filter(level => level[0] > midPrice)
+                .slice(0, 2)
+                .map(level => ({
+                    price: level[0],
+                    strength: level[1],
+                    distance: level[0] - midPrice
+                }));
+                
+            return {
+                support: supportLevels,
+                resistance: resistanceLevels
+            };
+        }
+        
+        function getLargeOrders(bids, asks, totalBidQty, totalAskQty) {
+            const largeOrders = [];
+            
+            // Find large bid orders (>3% of total bid qty)
+            bids.forEach(bid => {
+                const percentOfTotal = (bid.quantity / totalBidQty) * 100;
+                if (percentOfTotal > 3) {
+                    largeOrders.push({
+                        type: 'Bid',
+                        price: bid.price,
+                        quantity: bid.quantity,
+                        percentOfTotal
+                    });
+                }
+            });
+            
+            // Find large ask orders (>3% of total ask qty)
+            asks.forEach(ask => {
+                const percentOfTotal = (ask.quantity / totalAskQty) * 100;
+                if (percentOfTotal > 3) {
+                    largeOrders.push({
+                        type: 'Ask',
+                        price: ask.price,
+                        quantity: ask.quantity,
+                        percentOfTotal
+                    });
+                }
+            });
+            
+            // Sort by percent of total (descending)
+            return largeOrders.sort((a, b) => b.percentOfTotal - a.percentOfTotal).slice(0, 10);
+        }
+        
+        function calculateDepthDistribution(bids, asks, totalBidQty, totalAskQty) {
+            // Calculate quantity in top 5 levels
+            let top5BidQty = 0;
+            let top5AskQty = 0;
+            
+            // Calculate quantity in next 10 levels (6-15)
+            let next10BidQty = 0;
+            let next10AskQty = 0;
+            
+            // Calculate quantity in remaining levels
+            let restBidQty = 0;
+            let restAskQty = 0;
+            
+            bids.forEach((bid, index) => {
+                if (index < 5) {
+                    top5BidQty += bid.quantity;
+                } else if (index < 15) {
+                    next10BidQty += bid.quantity;
+                } else {
+                    restBidQty += bid.quantity;
+                }
+            });
+            
+            asks.forEach((ask, index) => {
+                if (index < 5) {
+                    top5AskQty += ask.quantity;
+                } else if (index < 15) {
+                    next10AskQty += ask.quantity;
+                } else {
+                    restAskQty += ask.quantity;
+                }
+            });
+            
+            // Calculate percentages
+            const top5BidPercent = (top5BidQty / totalBidQty) * 100;
+            const top5AskPercent = (top5AskQty / totalAskQty) * 100;
+            
+            const next10BidPercent = (next10BidQty / totalBidQty) * 100;
+            const next10AskPercent = (next10AskQty / totalAskQty) * 100;
+            
+            const restBidPercent = (restBidQty / totalBidQty) * 100;
+            const restAskPercent = (restAskQty / totalAskQty) * 100;
+            
+            return {
+                top5: {
+                    bid: { qty: top5BidQty, percent: top5BidPercent },
+                    ask: { qty: top5AskQty, percent: top5AskPercent }
+                },
+                next10: {
+                    bid: { qty: next10BidQty, percent: next10BidPercent },
+                    ask: { qty: next10AskQty, percent: next10AskPercent }
+                },
+                rest: {
+                    bid: { qty: restBidQty, percent: restBidPercent },
+                    ask: { qty: restAskQty, percent: restAskPercent }
+                }
+            };
+        }
+        
+        function updateSupportResistanceDisplay(levels) {
+            if (levels.support.length >= 1) {
+                document.getElementById('support-level-1').textContent = formatPrice(levels.support[0].price);
+                document.getElementById('support-distance-1').textContent = formatPrice(levels.support[0].distance);
+            }
+            
+            if (levels.support.length >= 2) {
+                document.getElementById('support-level-2').textContent = formatPrice(levels.support[1].price);
+                document.getElementById('support-distance-2').textContent = formatPrice(levels.support[1].distance);
+            }
+            
+            if (levels.resistance.length >= 1) {
+                document.getElementById('resistance-level-1').textContent = formatPrice(levels.resistance[0].price);
+                document.getElementById('resistance-distance-1').textContent = formatPrice(levels.resistance[0].distance);
+            }
+            
+            if (levels.resistance.length >= 2) {
+                document.getElementById('resistance-level-2').textContent = formatPrice(levels.resistance[1].price);
+                document.getElementById('resistance-distance-2').textContent = formatPrice(levels.resistance[1].distance);
+            }
+        }
+        
+        function updateLargeOrdersDisplay(largeOrders) {
+            const container = document.getElementById('large-orders');
+            container.innerHTML = '';
+            
+            if (largeOrders.length === 0) {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td colspan="4" class="text-center text-opacity-50">No large orders detected</td>`;
+                container.appendChild(row);
+                return;
+            }
+            
+            largeOrders.forEach(order => {
+                const row = document.createElement('tr');
+                const typeClass = order.type === 'Bid' ? 'text-success' : 'text-error';
+                
+                row.innerHTML = `
+                    <td class="${typeClass}">${order.type}</td>
+                    <td class="font-mono">${formatPrice(order.price)}</td>
+                    <td class="text-right font-mono">${formatQuantity(order.quantity)}</td>
+                    <td class="text-right">${formatPercentage(order.percentOfTotal)}</td>
+                `;
+                
+                container.appendChild(row);
+            });
+        }
+        
+        function updatePriceClustersDisplay(clusters) {
+            const container = document.getElementById('price-clusters');
+            container.innerHTML = '';
+            
+            clusters.forEach(cluster => {
+                const row = document.createElement('tr');
+                const netClass = cluster.net >= 0 ? 'text-success' : 'text-error';
+                const netPrefix = cluster.net >= 0 ? '+' : '';
+                
+                row.innerHTML = `
+                    <td class="text-xs">${cluster.range}</td>
+                    <td class="text-right text-success font-mono">${formatQuantity(cluster.bidQty)}</td>
+                    <td class="text-right text-error font-mono">${formatQuantity(cluster.askQty)}</td>
+                    <td class="text-right ${netClass} font-mono">${netPrefix}${formatQuantity(cluster.net)}</td>
+                `;
+                
+                container.appendChild(row);
+            });
+        }
+        
+        function updateDepthDistributionDisplay(distribution) {
+            // Top 5 levels
+            document.getElementById('top5-bid-percent').textContent = formatPercentage(distribution.top5.bid.percent);
+            document.getElementById('top5-ask-percent').textContent = formatPercentage(distribution.top5.ask.percent);
+            
+            document.getElementById('top5-bid-bar').style.width = `${distribution.top5.bid.percent}%`;
+            document.getElementById('top5-ask-bar').style.width = `${distribution.top5.ask.percent}%`;
+            
+            // Next 10 levels
+            document.getElementById('next10-bid-percent').textContent = formatPercentage(distribution.next10.bid.percent);
+            document.getElementById('next10-ask-percent').textContent = formatPercentage(distribution.next10.ask.percent);
+            
+            document.getElementById('next10-bid-bar').style.width = `${distribution.next10.bid.percent}%`;
+            document.getElementById('next10-ask-bar').style.width = `${distribution.next10.ask.percent}%`;
+            
+            // Remaining levels
+            document.getElementById('rest-bid-percent').textContent = formatPercentage(distribution.rest.bid.percent);
+            document.getElementById('rest-ask-percent').textContent = formatPercentage(distribution.rest.ask.percent);
+            
+            document.getElementById('rest-bid-bar').style.width = `${distribution.rest.bid.percent}%`;
+            document.getElementById('rest-ask-bar').style.width = `${distribution.rest.ask.percent}%`;
+        }
+        
+        function updateMarketDepth(data) {
+            Object.entries(data).forEach(([symbol, depthData]) => {
+                // Update timestamp
+                document.getElementById('last-update-time').textContent = formatDateTime(depthData.timestamp);
+                
+                // Update total quantities
+                const totalBidQty = depthData.total_bid_qty;
+                const totalAskQty = depthData.total_sell_qty;
+                
+                document.getElementById('total-bid-qty').textContent = formatQuantity(totalBidQty);
+                document.getElementById('total-ask-qty').textContent = formatQuantity(totalAskQty);
+                
+                // Update bid-ask ratio
+                const total = totalBidQty + totalAskQty;
+                const bidRatio = total > 0 ? (totalBidQty / total * 100) : 50;
+                const askRatio = total > 0 ? (totalAskQty / total * 100) : 50;
+                
+                document.getElementById('bid-ratio-bar').style.width = `${bidRatio}%`;
+                document.getElementById('ask-ratio-bar').style.width = `${askRatio}%`;
+                document.getElementById('bid-ask-ratio').textContent = `${bidRatio.toFixed(1)}% : ${askRatio.toFixed(1)}%`;
+                
+                // Filter out invalid levels - skip levels with zero or negative prices
+                let validBids = depthData.bids.filter(bid => bid.price > 0);
+                let validAsks = depthData.asks.filter(ask => ask.price > 0);
+                
+                // If we don't have any valid bids or asks, keep the previous valid data
+                if (validBids.length === 0 && previousValidData.bids.length > 0) {
+                    validBids = previousValidData.bids;
+                    console.warn("Received zero/invalid bid prices, using previous valid data");
+                }
+                
+                if (validAsks.length === 0 && previousValidData.asks.length > 0) {
+                    validAsks = previousValidData.asks;
+                    console.warn("Received zero/invalid ask prices, using previous valid data");
+                }
+                
+                // Store valid data for future use
+                if (validBids.length > 0) previousValidData.bids = [...validBids];
+                if (validAsks.length > 0) previousValidData.asks = [...validAsks];
+                
+                // Market sentiment calculation only if we have valid data
+                if (validBids.length > 0 && validAsks.length > 0) {
+                    const sentimentValue = calculateSentiment(totalBidQty, totalAskQty);
+                    document.getElementById('sentiment-score').textContent = sentimentValue.toFixed(2);
+                    
+                    // Update sentiment gauge
+                    const gaugeValue = ((sentimentValue + 1) / 2) * 100; // Convert -1..1 to 0..100
+                    const sentimentGauge = document.getElementById('sentiment-gauge');
+                    sentimentGauge.style.setProperty('--value', gaugeValue);
+                    sentimentGauge.textContent = `${gaugeValue.toFixed(0)}%`;
+                    
+                    let sentimentText = 'Neutral';
+                    let sentimentClass = 'badge-info';
+                    
+                    if (sentimentValue > 0.3) {
+                        sentimentText = 'Bullish';
+                        sentimentClass = 'badge-success';
+                    } else if (sentimentValue > 0.1) {
+                        sentimentText = 'Mildly Bullish';
+                        sentimentClass = 'badge-success';
+                    } else if (sentimentValue < -0.3) {
+                        sentimentText = 'Bearish';
+                        sentimentClass = 'badge-error';
+                    } else if (sentimentValue < -0.1) {
+                        sentimentText = 'Mildly Bearish';
+                        sentimentClass = 'badge-error';
+                    }
+                    
+                    const sentimentBadge = document.getElementById('market-sentiment');
+                    sentimentBadge.textContent = sentimentText;
+                    sentimentBadge.className = `badge ${sentimentClass} badge-lg`;
+                }
+                
+                // Calculate max quantities for depth visualization, avoid division by zero
+                maxQuantity.bid = Math.max(...validBids.map(level => level.quantity), 1);
+                maxQuantity.ask = Math.max(...validAsks.map(level => level.quantity), 1);
+                
+                // Update best bid and ask for spread calculation
+                if (validBids.length > 0 && validAsks.length > 0) {
+                    const bestBid = validBids[0].price;
+                    const bestAsk = validAsks[0].price;
+                    
+                    // Check for invalid spread (ask should be higher than bid in normal conditions)
+                    if (bestAsk > bestBid) {
+                        const spread = bestAsk - bestBid;
+                        const spreadPips = spread.toFixed(2);
+                        
+                        document.getElementById('bid-ask-spread').textContent = `${spreadPips} (${(spread / bestBid * 100).toFixed(3)}%)`;
+                        
+                        // Update last price (midpoint) - only if we have valid data
+                        const midPrice = (bestBid + bestAsk) / 2;
+                        
+                        // Avoid updating with invalid midPrice
+                        if (midPrice > 0) {
+                            if (lastPrice > 0) {
+                                priceChange = midPrice - lastPrice;
+                            }
+                            lastPrice = midPrice;
+                            
+                            document.getElementById('last-price').textContent = formatPrice(midPrice);
+                            document.getElementById('price-change').textContent = formatPriceChange(priceChange);
+                            document.getElementById('price-change').className = priceChange >= 0 ? 'stat-desc text-xs text-success' : 'stat-desc text-xs text-error';
+                        }
+                    } else {
+                        console.warn("Invalid spread detected: best ask price is not higher than best bid price");
+                    }
+                }
+                
+                // Calculate VWAP
+                vwap = calculateVWAP(validBids, validAsks);
+                document.getElementById('vwap-value').textContent = formatPrice(vwap);
+                
+                // Calculate support and resistance levels
+                const supportResistance = getSupportResistanceLevels(validBids, validAsks);
+                updateSupportResistanceDisplay(supportResistance);
+                
+                // Calculate and update price clusters
+                const priceClusters = calculatePriceClusters(validBids, validAsks);
+                updatePriceClustersDisplay(priceClusters);
+                
+                // Find large orders
+                const largeOrders = getLargeOrders(validBids, validAsks, totalBidQty, totalAskQty);
+                updateLargeOrdersDisplay(largeOrders);
+                
+                // Calculate and update depth distribution
+                const depthDistribution = calculateDepthDistribution(validBids, validAsks, totalBidQty, totalAskQty);
+                updateDepthDistributionDisplay(depthDistribution);
+                
+                // Get selected depth level and settings
+                const maxLevels = parseInt(document.getElementById('depth-level-select').value);
+                const showDepthBars = document.getElementById('toggle-depth-bars').checked;
+                const hideZeroQty = document.getElementById('toggle-hide-zero').checked;
+                
+                // Update DOM levels count badge
+                document.getElementById('dom-levels-count').textContent = `${maxLevels} Levels`;
+                
+                // Update visible totals
+                let visibleBidQty = 0;
+                let visibleAskQty = 0;
+                
+                // Apply zero quantity filtering if enabled
+                let filteredBids = hideZeroQty 
+                    ? validBids.filter(bid => bid.quantity > 0)
+                    : validBids;
+                    
+                let filteredAsks = hideZeroQty 
+                    ? validAsks.filter(ask => ask.quantity > 0)
+                    : validAsks;
+                    
+                // Ensure we have the required number of levels
+                filteredBids = filteredBids.slice(0, maxLevels);
+                filteredAsks = filteredAsks.slice(0, maxLevels);
+                
+                // Update asks (sell orders)
+                const asksBody = document.getElementById('asks');
+                asksBody.innerHTML = '';
+                filteredAsks.forEach((level, index) => {
+                    const row = document.createElement('tr');
+                    row.classList.add('ask-row');
+                    visibleAskQty += level.quantity;
+                    
+                    const percentOfMax = (level.quantity / maxQuantity.ask * 100).toFixed(0);
+                    const percentOfTotal = (level.quantity / totalAskQty * 100).toFixed(1);
+                    
+                    // Add heat level class
+                    const heatLevel = Math.floor(percentOfMax / 20); // 0-5 heat levels
+                    row.classList.add(`ask-heat-${heatLevel}`);
+                    
+                    row.innerHTML = `
+                        <td class="text-center text-xs opacity-70">${index + 1}</td>
+                        <td class="font-mono ${level.level === 0 ? 'font-bold price-highlight' : ''}">${formatPrice(level.price)}</td>
+                        <td class="font-mono text-right">${formatQuantity(level.quantity)}</td>
+                        <td class="text-center">${level.orders}</td>
+                        <td class="w-1/4 relative pr-2">
+                            ${showDepthBars ? `<div class="depth-bar bg-error absolute top-1/2 right-0 transform -translate-y-1/2" style="width: ${percentOfMax}%"></div>` : ''}
+                            <span class="relative z-10 text-xs opacity-80">${percentOfMax}%</span>
+                        </td>
+                    `;
+                    asksBody.appendChild(row);
+                });
+                
+                // Update bids (buy orders)
+                const bidsBody = document.getElementById('bids');
+                bidsBody.innerHTML = '';
+                filteredBids.forEach((level, index) => {
+                    const row = document.createElement('tr');
+                    row.classList.add('bid-row');
+                    visibleBidQty += level.quantity;
+                    
+                    const percentOfMax = (level.quantity / maxQuantity.bid * 100).toFixed(0);
+                    const percentOfTotal = (level.quantity / totalBidQty * 100).toFixed(1);
+                    
+                    // Add heat level class
+                    const heatLevel = Math.floor(percentOfMax / 20); // 0-5 heat levels
+                    row.classList.add(`bid-heat-${heatLevel}`);
+                    
+                    row.innerHTML = `
+                        <td class="text-center text-xs opacity-70">${index + 1}</td>
+                        <td class="font-mono ${level.level === 0 ? 'font-bold price-highlight' : ''}">${formatPrice(level.price)}</td>
+                        <td class="font-mono text-right">${formatQuantity(level.quantity)}</td>
+                        <td class="text-center">${level.orders}</td>
+                        <td class="w-1/4 relative pr-2">
+                            ${showDepthBars ? `<div class="depth-bar bg-success absolute top-1/2 right-0 transform -translate-y-1/2" style="width: ${percentOfMax}%"></div>` : ''}
+                            <span class="relative z-10 text-xs opacity-80">${percentOfMax}%</span>
+                        </td>
+                    `;
+                    bidsBody.appendChild(row);
+                });
+                
+                // Update visible quantities
+                document.getElementById('visible-bid-qty').textContent = formatQuantity(visibleBidQty);
+                document.getElementById('visible-ask-qty').textContent = formatQuantity(visibleAskQty);
+                
+                // Update order flow metrics
+                const buyerControl = (visibleBidQty / (visibleBidQty + visibleAskQty) * 100).toFixed(0);
+                document.getElementById('order-strength').textContent = `${buyerControl}%`;
+                document.getElementById('price-pressure').textContent = priceChange >= 0 ? '↑' : '↓';
+                document.getElementById('price-pressure').className = priceChange >= 0 ? 'stat-value text-success text-xl' : 'stat-value text-error text-xl';
+                document.getElementById('market-efficiency').textContent = '67%'; // This would need actual order fill data
+                
+                // Update cumulative delta
+                cumulativeDelta += priceChange * 1000; // Simplified calculation
+                document.getElementById('cumulative-delta').textContent = formatQuantity(Math.round(cumulativeDelta));
+                document.getElementById('cumulative-delta').className = cumulativeDelta >= 0 ? 'stat-value text-success text-xl' : 'stat-value text-error text-xl';
+            });
+        }
+
+        socket.on('market_depth', function(data) {
+            updateMarketDepth(data);
+        });
+
+        // Theme toggler
+        document.querySelector('.theme-controller').addEventListener('change', function(e) {
+            document.querySelector('body').setAttribute('data-theme', e.target.checked ? 'dark' : 'light');
+        });
+        
+        // Tooltip functionality for quantity percentages
+        document.addEventListener('mouseover', function(e) {
+            const target = e.target;
+            if (target.title) {
+                const tooltip = document.getElementById('tooltip');
+                tooltip.textContent = target.title;
+                tooltip.style.left = `${e.pageX + 10}px`;
+                tooltip.style.top = `${e.pageY + 10}px`;
+                tooltip.style.display = 'block';
+            }
+        });
+        
+        document.addEventListener('mouseout', function(e) {
+            if (e.target.title) {
+                document.getElementById('tooltip').style.display = 'none';
+            }
+        });
+        
+        document.addEventListener('mousemove', function(e) {
+            const tooltip = document.getElementById('tooltip');
+            if (tooltip.style.display === 'block') {
+                tooltip.style.left = `${e.pageX + 10}px`;
+                tooltip.style.top = `${e.pageY + 10}px`;
+            }
+        });
+    </script>
+</body>
+</html>
