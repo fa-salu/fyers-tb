@@ -1,3 +1,7 @@
+
+from gevent import monkey
+monkey.patch_all()
+
 import os
 import json
 import time
@@ -17,7 +21,7 @@ FYERS_ACCESS_TOKEN = os.getenv('FYERS_ACCESS_TOKEN').strip("'")
 WEBSOCKET_URL = "wss://rtsocket-api.fyers.in/versova"
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 def process_market_depth(message_bytes):
     """Process market depth protobuf message"""
