@@ -32,5 +32,5 @@ def get_access_token(auth_code):
     return response.json()
 
 token_response = get_access_token(auth_code)
-print("\n✅ Access Token Response:")
+print("\n✅ Access Token Response: ")
 print(token_response)
