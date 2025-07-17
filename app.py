@@ -7,21 +7,94 @@ import json
 import time
 import asyncio
 import websockets
-from flask import Flask, render_template
+from flask import Flask, render_template,request, redirect
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
 import msg_pb2
+from fyers_apiv3 import fyersModel
+import webbrowser
+from datetime import datetime
+
+
+# === Fyers app credentials ===
+REDIRECT_URI = "http://127.0.0.1:5001/callback"  # Use same Flask app port
+CLIENT_ID = "519Z1LNOLC-100"
+SECRET_KEY = "30KC8NSD9L"
+RESPONSE_TYPE = "code"
+GRANT_TYPE = "authorization_code"
+STATE = "sample"
+CACHE_FILE = "token_cache.json"
+
+auth_code = None
+
+
+def save_token(token_data):
+    token_data["timestamp"] = int(time.time())
+    with open(CACHE_FILE, "w") as f:
+        json.dump(token_data, f)
+
+def load_token():
+    if not os.path.exists(CACHE_FILE):
+        return None
+
+    with open(CACHE_FILE, "r") as f:
+        data = json.load(f)
+
+    token_time = data.get("timestamp")
+    if time.time() - token_time < 24 * 60 * 60:
+        return data.get("access_token")
+    return None
+
+def get_new_token():
+    global auth_code
+
+    session = fyersModel.SessionModel(
+        client_id=CLIENT_ID,
+        redirect_uri=REDIRECT_URI,
+        response_type=RESPONSE_TYPE,
+        state=STATE,
+        secret_key=SECRET_KEY,
+        grant_type=GRANT_TYPE
+    )
+    login_url = session.generate_authcode()
+    print("🌐 Opening browser for Fyers login...")
+    webbrowser.open(login_url)
+
+    while not auth_code:
+        time.sleep(1)
+
+    session.set_token(auth_code)
+    response = session.generate_token()
+    token = response.get("access_token")
+
+    if token:
+        save_token(response)
+    return token
+
+def get_access_token():
+    token = load_token()
+    if token:
+        print("✅ Reusing valid cached access token.")
+        return token
+    print("🔁 No valid token found. Starting login flow...")
+    return get_new_token()
 
 # Load environment variables
 load_dotenv()
 
 # Configuration
 FYERS_APP_ID = os.getenv('FYERS_APP_ID').strip("'")
-FYERS_ACCESS_TOKEN = os.getenv('FYERS_ACCESS_TOKEN').strip("'")
+# FYERS_ACCESS_TOKEN = os.getenv('FYERS_ACCESS_TOKEN').strip("'")
 WEBSOCKET_URL = "wss://rtsocket-api.fyers.in/versova"
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+
+def get_current_banknifty_fut_symbol():
+    now = datetime.now()
+    year_suffix = str(now.year)[-2:]         # e.g., 2025 → '25'
+    month_str = now.strftime("%b").upper()   # e.g., July → 'JUL'
+    return f"BANKNIFTY{year_suffix}{month_str}FUT"
 
 def process_market_depth(message_bytes):
     """Process market depth protobuf message"""
@@ -85,15 +158,26 @@ async def subscribe_symbols():
     """Subscribe to market depth data for symbols"""
     try:
         # Initial subscription message - only BANKNIFTY
+
+        symbol = get_current_banknifty_fut_symbol()
         subscribe_msg = {
             "type": 1,
             "data": {
                 "subs": 1,
-                "symbols": ["NSE:BANKNIFTY25JULFUT"],
+                "symbols": [f"NSE:{symbol}"],
                 "mode": "depth",
                 "channel": "1"
             }
         }
+        # subscribe_msg = {
+        #     "type": 1,
+        #     "data": {
+        #         "subs": 1,
+        #         "symbols": ["NSE:BANKNIFTY25JULFUT"],
+        #         "mode": "depth",
+        #         "channel": "1"
+        #     }
+        # }
         
         print(f"\n=== Sending Subscribe Message ===")
         print(f"Message: {json.dumps(subscribe_msg, indent=2)}")
@@ -186,8 +270,74 @@ async def websocket_client():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    token = load_token()
+    if token:
+        global FYERS_ACCESS_TOKEN
+        FYERS_ACCESS_TOKEN = token
 
+        # Start WebSocket only if not already running
+        global websocket
+        if websocket is None:
+            import threading
+            ws_thread = threading.Thread(target=run_websocket)
+            ws_thread.daemon = True
+            ws_thread.start()
+
+        return render_template('index.html')
+
+    # No token? Initiate login
+    session = fyersModel.SessionModel(
+        client_id=CLIENT_ID,
+        redirect_uri=REDIRECT_URI,
+        response_type=RESPONSE_TYPE,
+        state=STATE,
+        secret_key=SECRET_KEY,
+        grant_type=GRANT_TYPE
+    )
+    login_url = session.generate_authcode()
+    return redirect(login_url)
+
+@app.route('/callback')
+def fyers_callback():
+    global auth_code, FYERS_ACCESS_TOKEN
+    auth_code = request.args.get("auth_code")
+
+    if not auth_code:
+        return "Authorization failed", 400
+
+    session = fyersModel.SessionModel(
+        client_id=CLIENT_ID,
+        redirect_uri=REDIRECT_URI,
+        response_type=RESPONSE_TYPE,
+        state=STATE,
+        secret_key=SECRET_KEY,
+        grant_type=GRANT_TYPE
+    )
+
+    session.set_token(auth_code)
+    response = session.generate_token()
+
+    print("📥 Response: ", response)
+
+
+    token = response.get("access_token")
+
+    if token:
+        save_token(response)
+        FYERS_ACCESS_TOKEN = token
+        print("✅ Access token saved. Starting WebSocket...")
+
+        # Start WebSocket thread
+        global websocket
+        if websocket is None:
+            import threading
+            ws_thread = threading.Thread(target=run_websocket)
+            ws_thread.daemon = True
+            ws_thread.start()
+
+        return redirect("/")
+    else:
+        return "Failed to generate access token", 500
 @socketio.on('connect')
 def handle_connect():
     print('Client connected')
@@ -196,11 +346,7 @@ def run_websocket():
     asyncio.run(websocket_client())
 
 if __name__ == '__main__':
-    # Start WebSocket client in a separate thread
-    import threading
-    ws_thread = threading.Thread(target=run_websocket)
-    ws_thread.daemon = True
-    ws_thread.start()
-    
-    # Run Flask application
+    # No token check here!
+    # Start Flask server only
     socketio.run(app, debug=True, port=5001)
+    
